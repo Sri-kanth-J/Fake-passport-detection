@@ -1,0 +1,63 @@
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Model and ML artifacts
+*.pth
+*.pt
+*.keras
+*.h5
+*.hdf5
+*.bin
+*.weights
+*.onnx
+
+# Local data / generated project artifacts
+backend/.venv/
+backend/__pycache__/
+backend/audit_log.jsonl
+backend/mock_face_db/
+backend/sample_documents/
+backend/tamper_dataset/
+backend/tamper_model.pth
+backend/*.pth
+backend/*.pt
+backend/*.keras
+backend/*.h5
+backend/*.hdf5
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/package-lock.json
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+
+# Large archives / logs
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+*.log
+*.sqlite3
+*.db
+
+# Explicitly exclude the requested docs
+backend/TECH_STACK.md
+backend/REQUIREMENT_MATCH.md
