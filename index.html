@@ -5,116 +5,85 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="A local-only synthetic document-integrity triage demo." />
     <title>Document Integrity Demo</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=4" />
   </head>
   <body>
     <main class="shell">
       <header class="site-header">
         <div>
-          <p class="eyebrow">LOCAL-ONLY PROTOTYPE</p>
-          <h1>Document integrity<br /><span>triage demo</span></h1>
+          <p class="eyebrow">AI DOCUMENT SCREENING</p>
+          <h1>Real-world identity<br /><span>verification dashboard</span></h1>
         </div>
-        <p class="header-note">Synthetic data only<br />No uploads · No storage · No biometric matching</p>
+        <p class="header-note">Deep learning inference running locally<br />No uploads to cloud · Privacy first</p>
       </header>
 
       <section class="safety-note" aria-label="Safety boundary">
         <span aria-hidden="true">✦</span>
-        <p><strong>Human review stays in control.</strong> This starter checks fictional passport-style MRZ data and shows evidence for review. It never approves, denies, blacklists, or identifies a person.</p>
-      </section>
-
-      <section class="scenario-section" aria-labelledby="scenario-heading">
-        <div class="section-heading">
-          <p class="eyebrow">STEP 1</p>
-          <h2 id="scenario-heading">Choose a fictional test case</h2>
-        </div>
-        <div class="scenario-grid" id="scenarioGrid" aria-live="polite"></div>
+        <p><strong>Privacy First:</strong> This system processes images in memory only; they are not stored or shared with third parties. It runs local models (PassportEye, ManTraNet, PaddleOCR, DeepFace) to provide comprehensive signal intelligence.</p>
       </section>
 
       <section class="workspace">
         <form class="input-panel" id="screeningForm">
           <div class="section-heading">
-            <p class="eyebrow">STEP 2</p>
-            <h2>Inspect the synthetic data</h2>
+            <p class="eyebrow">STEP 1</p>
+            <h2>Upload Assets</h2>
           </div>
 
-          <label class="upload-label">
-            <span>Upload Document Image (Local processing only)</span>
-            <input type="file" id="documentImage" name="documentImage" accept="image/jpeg, image/png, image/webp" />
-            <span class="field-hint">Extracts MRZ automatically using PassportEye</span>
-          </label>
-
-          <label class="upload-label">
-            <span>Upload Live Selfie</span>
-            <input type="file" id="liveImage" name="liveImage" accept="image/jpeg, image/png, image/webp" />
-            <span class="field-hint">Matches against document photo using DeepFace</span>
-          </label>
-          <hr class="form-divider" />
-
-          <label>
-            <span>MRZ line 1</span>
-            <input id="mrzLine1" name="mrzLine1" autocomplete="off" spellcheck="false" maxlength="44" required />
-          </label>
-          <label>
-            <span>MRZ line 2</span>
-            <input id="mrzLine2" name="mrzLine2" autocomplete="off" spellcheck="false" maxlength="44" required />
-          </label>
-
-          <div class="field-grid">
-            <label>
-              <span>Printed name</span>
-              <input id="visibleName" name="visibleName" autocomplete="off" />
+          <div class="drop-zone" id="docDropZone">
+            <label for="documentImage" class="upload-label">
+              <span class="upload-icon">📄</span>
+              <span class="upload-title">Drop passport image here</span>
+              <span class="field-hint">or click to browse (JPEG, PNG)</span>
+              <input type="file" id="documentImage" name="documentImage" accept="image/jpeg, image/png, image/webp" class="file-input" required />
             </label>
-            <label>
-              <span>Printed document number</span>
-              <input id="visibleDocumentNumber" name="visibleDocumentNumber" autocomplete="off" />
-            </label>
-            <label>
-              <span>Printed date of birth</span>
-              <input id="visibleDateOfBirth" name="visibleDateOfBirth" type="date" />
-            </label>
-            <label>
-              <span>Printed expiry date</span>
-              <input id="visibleDateOfExpiry" name="visibleDateOfExpiry" type="date" />
-            </label>
+            <div id="docPreview" class="preview-container" hidden></div>
           </div>
 
-          <label class="consent-row">
-            <input id="testOnly" type="checkbox" required />
-            <span>I confirm this is fictional test data, not a real person’s document.</span>
-          </label>
-          <button type="submit" class="primary-button">Run explainable triage <span aria-hidden="true">→</span></button>
-          <p class="form-hint">This demo does not accept images, camera capture, real passport data, or face images.</p>
+          <div class="drop-zone" id="liveDropZone">
+            <label for="liveImage" class="upload-label">
+              <span class="upload-icon">🤳</span>
+              <span class="upload-title">Drop live selfie here</span>
+              <span class="field-hint">or click to browse (JPEG, PNG)</span>
+              <input type="file" id="liveImage" name="liveImage" accept="image/jpeg, image/png, image/webp" class="file-input" />
+            </label>
+            <div id="livePreview" class="preview-container" hidden></div>
+          </div>
+
+          <button type="submit" class="primary-button" id="submitBtn" disabled>Run AI Screening <span aria-hidden="true">→</span></button>
+          
+          <div id="progressIndicator" class="progress-indicator" hidden>
+            <div class="spinner"></div>
+            <span id="progressText">Analyzing document...</span>
+          </div>
         </form>
 
         <section class="result-panel" aria-live="polite" aria-labelledby="result-heading">
           <div class="section-heading result-heading">
             <div>
-              <p class="eyebrow">STEP 3</p>
-              <h2 id="result-heading">Evidence report</h2>
+              <p class="eyebrow">STEP 2</p>
+              <h2 id="result-heading">Intelligence Report</h2>
             </div>
             <span id="triageBadge" class="triage-badge neutral">Waiting for input</span>
           </div>
+          
           <div id="emptyResult" class="empty-state">
             <span aria-hidden="true">⌁</span>
-            <p>Select a fictional test case, then run the triage to see the separate quality, data-consistency, and visual-anomaly evidence.</p>
+            <p>Upload a document to begin the automated forensics and data extraction pipeline.</p>
           </div>
+          
           <div id="resultContent" hidden>
             <p id="triageDescription" class="triage-description"></p>
             <div class="axes-grid" id="axesGrid"></div>
             <div class="report-columns">
               <section>
-                <h3>Masked fields</h3>
+                <h3>Extracted Data</h3>
                 <dl class="field-list" id="fieldList"></dl>
               </section>
               <section>
-                <h3>Checks</h3>
+                <h3>Forensic Checks</h3>
                 <ul class="evidence-list" id="checkList"></ul>
               </section>
             </div>
-            <section id="signalSection" hidden>
-              <h3>Fixture-only signals</h3>
-              <ul class="evidence-list" id="signalList"></ul>
-            </section>
             <section class="audit-section">
               <h3>Non-identifying audit digest</h3>
               <code id="auditDigest"></code>
@@ -124,6 +93,6 @@
         </section>
       </section>
     </main>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=5"></script>
   </body>
 </html>

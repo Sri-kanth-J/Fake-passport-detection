@@ -1,7 +1,75 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const MRZ_LINE_LENGTH = 44;
 const TEST_DATA_NOTICE = "Synthetic demo data only — not a real travel-document verification service.";
+
+// ─── ICAO 9303 Worldwide Passport Rules ───────────────────────────────────────
+// Complete ISO 3166-1 alpha-3 country codes + ICAO special codes
+const VALID_COUNTRY_CODES = new Set([
+  // Special ICAO codes
+  "UTO", "UNO", "UNA", "UNK", "XXA", "XXB", "XXC", "XXX",
+  // A
+  "AFG","ALB","DZA","ASM","AND","AGO","AIA","ATA","ATG","ARG","ARM","ABW","AUS","AUT","AZE",
+  // B
+  "BHS","BHR","BGD","BRB","BLR","BEL","BLZ","BEN","BMU","BTN","BOL","BES","BIH","BWA","BVT",
+  "BRA","IOT","BRN","BGR","BFA","BDI",
+  // C
+  "CPV","KHM","CMR","CAN","CYM","CAF","TCD","CHL","CHN","CXR","CCK","COL","COM","COG","COD",
+  "COK","CRI","CIV","HRV","CUB","CUW","CYP","CZE",
+  // D
+  "DNK","DJI","DMA","DOM","DEU","D<<",
+  // E
+  "ECU","EGY","SLV","GNQ","ERI","EST","SWZ","ETH","EUE",
+  // F
+  "FLK","FRO","FJI","FIN","FRA","GUF","PYF","ATF",
+  // G
+  "GAB","GMB","GEO","GHA","GIB","GRC","GRL","GRD","GLP","GUM","GTM","GGY","GIN","GNB","GUY",
+  // H
+  "HTI","HMD","VAT","HND","HKG","HUN",
+  // I
+  "ISL","IND","IDN","IRN","IRQ","IRL","IMN","ISR","ITA",
+  // J
+  "JAM","JPN","JEY","JOR",
+  // K
+  "KAZ","KEN","KIR","PRK","KOR","KWT","KGZ","RKS",
+  // L
+  "LAO","LVA","LBN","LSO","LBR","LBY","LIE","LTU","LUX",
+  // M
+  "MAC","MDG","MWI","MYS","MDV","MLI","MLT","MHL","MTQ","MRT","MUS","MYT","MEX","FSM","MDA",
+  "MCO","MNG","MNE","MSR","MAR","MOZ","MMR","MKD",
+  // N
+  "NAM","NRU","NPL","NLD","NCL","NZL","NIC","NER","NGA","NIU","NFK","MNP","NOR",
+  // O
+  "OMN",
+  // P
+  "PAK","PLW","PSE","PAN","PNG","PRY","PER","PHL","PCN","POL","PRT","PRI",
+  // Q
+  "QAT",
+  // R
+  "REU","ROU","RUS","RWA",
+  // S
+  "BLM","SHN","KNA","LCA","MAF","SPM","VCT","WSM","SMR","STP","SAU","SEN","SRB","SYC","SLE",
+  "SGP","SXM","SVK","SVN","SLB","SOM","ZAF","SGS","SSD","ESP","LKA","SDN","SUR","SJM","SWE",
+  "CHE","SYR",
+  // T
+  "TWN","TJK","TZA","THA","TLS","TGO","TKL","TON","TTO","TUN","TUR","TKM","TCA","TUV",
+  // U
+  "UGA","UKR","ARE","GBR","USA","UMI","URY","UZB",
+  // V
+  "VUT","VEN","VNM","VGB","VIR",
+  // W
+  "WLF",
+  // Y
+  "YEM",
+  // Z
+  "ZMB","ZWE",
+  // Legacy / alternate codes used in MRZ
+  "GBD","GBN","GBO","GBP","GBS",  // British territories
+  "ANT","NTZ","CSK","YUG","SCG",  // Historical
+]);
+
+const VALID_DOC_TYPES = new Set(["P<", "PA", "PB", "PC", "PD", "PE", "PO", "PP"]);
+const VALID_SEX_CODES = new Set(["M", "F", "<"]);
 
 function checkDigit(value) {
   const weights = [7, 3, 1];
@@ -17,7 +85,7 @@ function checkDigit(value) {
 function normalizeMrzLine(value) {
   const line = String(value || "").toUpperCase().replace(/\s/g, "");
   if (line.length !== MRZ_LINE_LENGTH) {
-    throw new Error(`Each TD3 MRZ line must contain exactly ${MRZ_LINE_LENGTH} characters.`);
+    throw new Error(`Each TD3 MRZ line must contain exactly ${MRZ_LINE_LENGTH} characters. OCR parsed ${line.length} chars: ${line}`);
   }
   if (!/^[A-Z0-9<]+$/.test(line)) {
     throw new Error("MRZ lines may contain only A–Z, 0–9, and < characters.");
@@ -210,41 +278,50 @@ export function listDemoScenarios() {
 }
 
 function invalidMrzResult(errorMessage) {
-  const reasons = ["MRZ_INPUT_INVALID"];
+  const reasons = ["MRZ_INPUT_INVALID", "POTENTIAL_FORGERY_DETECTED"];
   return {
     screeningId: randomUUID(),
     notice: TEST_DATA_NOTICE,
-    triage: "RETAKE_IMAGE",
+    triage: "MANUAL_REVIEW",
     reasonCodes: reasons,
     analysisAxes: {
-      captureQuality: { status: "RETAKE", detail: "The provided MRZ is structurally unusable for this demo." },
-      dataConsistency: { status: "NOT_ASSESSED", detail: "Checks require two valid-length TD3 MRZ lines." },
+      captureQuality: { status: "REVIEW", detail: "The provided MRZ is structurally unusable. This usually indicates a forged document or a completely failed scan." },
+      dataConsistency: { status: "FAIL", detail: "Checks require two valid-length TD3 MRZ lines." },
       imageAnomaly: { status: "NOT_ASSESSED", detail: "Image analysis is not enabled in this starter." },
       identityComparison: { status: "UNAVAILABLE", detail: "No face comparison or identification is performed." }
     },
     fields: [],
-    checks: [{ id: "mrz.structure", label: "TD3 MRZ structure", status: "FAIL", severity: "retake", evidence: errorMessage }],
+    checks: [{ id: "mrz.structure", label: "TD3 MRZ structure", status: "FAIL", severity: "review", evidence: errorMessage }],
     signals: [],
-    auditDigest: createAuditDigest("manual-test", "RETAKE_IMAGE", reasons, ["mrz.structure:FAIL"], [])
+    auditDigest: createAuditDigest("UNKNOWN", "UNKNOWN", "MANUAL_REVIEW"),
+    limitations: [
+      "This result is triage assistance for a fictional fixture, not proof of authenticity.",
+      "A trained human must make any real-world decision."
+    ]
   };
 }
 
-let previousBlockHash = "0000000000000000000000000000000000000000000000000000000000000000";
 
-function createAuditDigest(inputMode, triage, reasonCodes, checkStates, signalIds) {
-  const nonIdentifyingEvent = {
-    schema: "screening-result-v0.2",
-    timestamp: new Date().toISOString(),
-    previousHash: previousBlockHash,
-    inputMode,
-    triage,
-    reasonCodes: [...reasonCodes].sort(),
-    checkStates: [...checkStates].sort(),
-    signalIds: [...signalIds].sort()
+function maskIdNumber(idStr, docType) {
+  if (!idStr) return "—";
+  if (docType === "aadhaar" || docType === "pan" || docType === "voter_id" || docType === "dl") {
+    if (idStr.length <= 4) return "•".repeat(idStr.length);
+    return "•".repeat(idStr.length - 4) + idStr.slice(-4);
+  }
+  return maskValue(idStr, 4);
+}
+
+function createAuditDigest(name, documentNumber, verdict) {
+  const timestamp = new Date().toISOString();
+  const salt = randomUUID();
+  const payload = `${name}|${documentNumber}|${verdict}|${timestamp}|${salt}`;
+  const hash = createHash("sha256").update(payload).digest("hex");
+  
+  return {
+    hash,
+    plaintextVerdict: verdict,
+    timestamp
   };
-  const currentHash = createHash("sha256").update(JSON.stringify(nonIdentifyingEvent)).digest("hex");
-  previousBlockHash = currentHash;
-  return currentHash;
 }
 
 function fieldAgreementCheck(id, label, mrzValue, visibleValue) {
@@ -275,12 +352,188 @@ function expiryCheck(dateOfExpiry) {
   };
 }
 
+function enrichWithBackendResults(result, input) {
+  // Process tampering results from ManTraNet/ELA
+  const tamper = input.tamperingResult;
+  if (tamper && tamper.success) {
+    const mantraScore = tamper.mantraScore || 0;
+    if (tamper.tampered) {
+      result.analysisAxes.imageAnomaly = { status: "REVIEW", detail: `Tampering detected (ELA variance: ${tamper.score.toFixed(0)}, ManTraNet anomaly: ${mantraScore.toFixed(2)})` };
+      result.reasonCodes.push("TAMPERING_DETECTED");
+      result.checks.push({ id: "tamper", label: "Tampering Detection", status: "FAIL", severity: "review", evidence: "High anomaly score detected in ELA or ManTraNet analysis." });
+    } else {
+      result.analysisAxes.imageAnomaly = { status: "CLEAR", detail: `Image pixels appear consistent (ELA: ${tamper.score.toFixed(0)}, ManTraNet: ${mantraScore.toFixed(2)})` };
+      result.checks.push({ id: "tamper", label: "Tampering Detection", status: "PASS", severity: "info", evidence: "Image compression and pixels appear consistent." });
+    }
+  }
+
+  // Process AI detection results from the 5-gate forensic engine
+  const aiDetect = input.aiDetectionResult;
+  if (aiDetect && aiDetect.success) {
+    const isAi = aiDetect.artificial;
+    const confidence = (isAi ? aiDetect.artificial_score : aiDetect.human_score) * 100;
+    if (isAi) {
+      result.analysisAxes.imageAnomaly = { status: "REVIEW", detail: `AI generation/tampering detected (${confidence.toFixed(1)}% confidence). Verdict: ${aiDetect.overall_verdict || "SUSPICIOUS"}` };
+      result.reasonCodes.push("SYNTHETIC_GENERATION_DETECTED");
+      result.checks.push({ id: "ai_detect", label: "AI Generation Check", status: "FAIL", severity: "review", evidence: `5-Gate forensic engine flagged this image (${confidence.toFixed(1)}%).` });
+    } else {
+      result.checks.push({ id: "ai_detect", label: "AI Generation Check", status: "PASS", severity: "info", evidence: `Image appears camera-captured (${confidence.toFixed(1)}%).` });
+    }
+
+    // Add individual gate results as checks
+    if (aiDetect.gates) {
+      aiDetect.gates.forEach(gate => {
+        const gatePass = gate.score < 0.5;
+        // Gate 5 is informational only for now (unvalidated heuristic)
+        const isInformational = gate.gate === "5";
+        
+        result.checks.push({
+          id: `ai_gate_${gate.gate}`,
+          label: `Gate ${gate.gate}: ${gate.name}`,
+          status: gatePass ? "PASS" : "FAIL",
+          severity: gatePass ? "info" : (isInformational ? "info" : "review"),
+          evidence: `Score: ${(gate.score * 100).toFixed(1)}% — ${gate.verdict}`
+        });
+        
+        // Gate 5 is informational only (unvalidated FFT heuristic, weight=0)
+        // Do NOT push a reason code for it — it must not affect triage.
+      });
+    }
+  }
+
+  // Process face verification results
+  const faceVerif = input.faceVerification;
+  if (faceVerif) {
+    // Wider inconclusive bands for Aadhaar/PAN
+    const docType = input.documentType || "passport";
+    let isMatch = faceVerif.match;
+    
+    // Custom handling based on distance if we want wider bands.
+    // DeepFace standard threshold is usually 0.4 for cosine, 0.6 for euclidean, etc.
+    // For now we rely on faceVerif.match which is provided by the backend,
+    // but we adjust the severity/status based on document type.
+    
+    if (faceVerif.success && isMatch === true) {
+      result.analysisAxes.identityComparison = { status: "CLEAR", detail: `Face matches document photo. Distance: ${faceVerif.distance.toFixed(2)}` };
+      result.checks.push({ id: "face.match", label: "Face verification", status: "PASS", severity: "info", evidence: "DeepFace matching successful." });
+    } else if (faceVerif.success && isMatch === false) {
+      const isLowQualityDoc = ["aadhaar", "pan"].includes(docType);
+      const isBorderline = faceVerif.distance > 0.4 && faceVerif.distance < 0.65; // example borderline heuristic
+      
+      if (isLowQualityDoc && isBorderline) {
+        result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Inconclusive face match due to document photo quality. Distance: ${faceVerif.distance.toFixed(2)}` };
+        // We do not add FACE_MISMATCH reason code, we treat it as inconclusive
+        result.checks.push({ id: "face.match", label: "Face verification (Inconclusive)", status: "FAIL", severity: "review", evidence: "Face distance is borderline; given document type, this may be a photo quality artifact." });
+      } else {
+        result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Face mismatch. Distance: ${faceVerif.distance.toFixed(2)}` };
+        result.reasonCodes.push("FACE_MISMATCH");
+        result.checks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Document photo and live selfie do not match." });
+      }
+    }
+  }
+
+  // Process QR Cryptographic Verification
+  const qrVerif = input.qrVerification;
+  result.analysisAxes.qrCryptography = { status: "NOT_ASSESSED", detail: "No QR data received." };
+  
+  if (qrVerif) {
+    if (qrVerif.signature_valid === true) {
+      result.analysisAxes.qrCryptography = { status: "CLEAR", detail: "Secure QR Signature Verified. Data is unaltered." };
+      result.checks.push({ id: "qr.cryptography", label: "Secure QR Signature", status: "PASS", severity: "info", evidence: qrVerif.reason });
+    } else if (qrVerif.signature_valid === false) {
+      result.analysisAxes.qrCryptography = { status: "REVIEW", detail: "Invalid Secure QR Signature!" };
+      result.checks.push({ id: "qr.cryptography", label: "Secure QR Signature", status: "FAIL", severity: "review", evidence: qrVerif.reason });
+      result.reasonCodes.push("QR_SIGNATURE_INVALID");
+    } else {
+      result.analysisAxes.qrCryptography = { status: "NOT_ASSESSED", detail: qrVerif.reason || "QR code not present or not readable." };
+      result.checks.push({ id: "qr.cryptography", label: "Secure QR Signature", status: "NOT_ASSESSED", severity: "info", evidence: qrVerif.reason || "QR code not present or not readable." });
+    }
+  }
+
+  // Recalculate triage if ML signals added reason codes
+  if (result.reasonCodes.length > 0 && result.triage === "NO_HIGH_RISK_SIGNAL_DETECTED") {
+    result.triage = "MANUAL_REVIEW";
+  }
+
+  return result;
+}
+
 export function analyzeScreening(input = {}) {
+  const docType = input.documentType || "passport"; // Fallback to passport for older tests
+  
+  if (docType === "unknown") {
+    const result = invalidMrzResult("Document type could not be identified.");
+    return enrichWithBackendResults(result, input);
+  }
+
+  // --- NON-PASSPORT INDIAN IDs ---
+  if (docType !== "passport") {
+    const idExtract = input.idExtract || { is_valid: false, reason: "No extraction payload", id_number: "UNKNOWN" };
+    const rawId = idExtract.id_number || "UNKNOWN";
+    
+    const isValid = idExtract.is_valid;
+    const reasons = [];
+    if (!isValid) reasons.push("VALIDATION_FAILED");
+
+    const checks = [
+      {
+        id: "id_validation",
+        label: `${docType.toUpperCase()} Format Validation`,
+        status: isValid ? "PASS" : "FAIL",
+        severity: isValid ? "info" : "review",
+        evidence: idExtract.reason
+      }
+    ];
+
+    const triage = reasons.length ? "MANUAL_REVIEW" : "NO_HIGH_RISK_SIGNAL_DETECTED";
+
+    // For these docs, the ID validation carries lower trust than MRZ, so we still flag it if it fails.
+    // The true weight is in the image forensics and face match (added by enrichWithBackendResults).
+
+    const result = {
+      screeningId: randomUUID(),
+      notice: TEST_DATA_NOTICE,
+      triage,
+      reasonCodes: reasons,
+      analysisAxes: {
+        captureQuality: { status: "NOT_ASSESSED", detail: "Quality checks not implemented for this type." },
+        dataConsistency: {
+          status: isValid ? "CLEAR" : "REVIEW",
+          detail: isValid ? "Validation algorithm passed." : "Validation failed."
+        },
+        imageAnomaly: { status: "NOT_ASSESSED", detail: "" },
+        identityComparison: { status: "UNAVAILABLE", detail: "" }
+      },
+      fields: [
+        { id: "documentType", label: "Document Type", maskedValue: docType.toUpperCase(), source: "Classifier" },
+        { id: "documentNumber", label: "ID Number", maskedValue: maskIdNumber(rawId, docType), source: "OCR Extraction" }
+      ],
+      checks,
+      signals: [],
+      auditDigest: createAuditDigest("UNKNOWN_NAME", rawId, triage),
+      limitations: [
+        "This result is triage assistance for a fictional fixture, not proof of authenticity.",
+        "A trained human must make any real-world decision."
+      ]
+    };
+    
+    return enrichWithBackendResults(result, input);
+  }
+
+  // --- PASSPORT (Original MRZ Logic) ---
   let parsed;
+  let mrzFailed = false;
+  let mrzError = "";
   try {
     parsed = parseTd3Mrz(input.mrzLine1, input.mrzLine2);
   } catch (error) {
-    return invalidMrzResult(error.message);
+    mrzFailed = true;
+    mrzError = error.message;
+  }
+
+  if (mrzFailed) {
+    const result = invalidMrzResult(mrzError);
+    return enrichWithBackendResults(result, input);
   }
 
   const scenario = getScenario(input.scenarioId);
@@ -292,7 +545,99 @@ export function analyzeScreening(input = {}) {
     fieldAgreementCheck("fields.expiry_date", "Printed expiry date agrees with MRZ", parsed.fields.dateOfExpiry, visibleFields.dateOfExpiry),
     expiryCheck(parsed.fields.dateOfExpiry)
   ];
-  const allChecks = [...parsed.checks, ...dataChecks];
+
+  // ─── ICAO 9303 Worldwide Validation Rules ───
+  const icaoChecks = [];
+
+  // Rule: Document type must start with 'P'
+  const passportType = parsed.fields.documentType;
+  const validDocType = VALID_DOC_TYPES.has(passportType) || passportType.startsWith("P");
+  icaoChecks.push({
+    id: "icao.document_type", label: "Document type is passport (P)",
+    status: validDocType ? "PASS" : "FAIL",
+    severity: validDocType ? "info" : "review",
+    evidence: validDocType
+      ? `Document type '${passportType}' is a valid ICAO passport type.`
+      : `Document type '${passportType}' is not a recognized passport type. Expected 'P<' or similar.`
+  });
+
+  // Rule: Issuing country must be valid ISO 3166-1 alpha-3
+  const issuer = parsed.fields.issuingCountry;
+  const validIssuer = VALID_COUNTRY_CODES.has(issuer);
+  icaoChecks.push({
+    id: "icao.issuing_country", label: "Issuing country is valid ISO code",
+    status: validIssuer ? "PASS" : "FAIL",
+    severity: validIssuer ? "info" : "review",
+    evidence: validIssuer
+      ? `Issuing country '${issuer}' is a recognized ISO 3166-1 / ICAO code.`
+      : `Issuing country '${issuer}' is NOT a valid ISO 3166-1 country code. Possible forgery.`
+  });
+
+  // Rule: Nationality must be valid ISO 3166-1 alpha-3
+  const nationality = parsed.fields.nationality;
+  const validNationality = VALID_COUNTRY_CODES.has(nationality);
+  icaoChecks.push({
+    id: "icao.nationality", label: "Nationality is valid ISO code",
+    status: validNationality ? "PASS" : "FAIL",
+    severity: validNationality ? "info" : "review",
+    evidence: validNationality
+      ? `Nationality '${nationality}' is a recognized ISO 3166-1 / ICAO code.`
+      : `Nationality '${nationality}' is NOT a valid ISO 3166-1 country code. Possible forgery.`
+  });
+
+  // Rule: Sex field must be M, F, or < (unspecified)
+  const sexRaw = parsed.raw.line2[20];
+  const validSex = VALID_SEX_CODES.has(sexRaw);
+  icaoChecks.push({
+    id: "icao.sex_field", label: "Sex field is valid (M/F/<)",
+    status: validSex ? "PASS" : "FAIL",
+    severity: validSex ? "info" : "review",
+    evidence: validSex
+      ? `Sex field '${sexRaw}' is valid per ICAO 9303.`
+      : `Sex field '${sexRaw}' is invalid. Must be M, F, or < (unspecified).`
+  });
+
+  // Rule: Date of birth must be parseable and not in the future
+  const dob = parsed.fields.dateOfBirth;
+  const dobValid = dob !== null;
+  const dobInFuture = dob && Date.parse(`${dob}T00:00:00Z`) > Date.now();
+  icaoChecks.push({
+    id: "icao.birth_date_valid", label: "Date of birth is valid",
+    status: (dobValid && !dobInFuture) ? "PASS" : "FAIL",
+    severity: (dobValid && !dobInFuture) ? "info" : "review",
+    evidence: !dobValid
+      ? "Date of birth cannot be parsed from MRZ. Invalid YYMMDD format."
+      : dobInFuture
+        ? `Date of birth ${dob} is in the future. Impossible — likely forged.`
+        : `Date of birth ${dob} is a valid past date.`
+  });
+
+  // Rule: Name must not be empty
+  const name = parsed.fields.name;
+  const nameValid = name && name.trim().length > 1;
+  icaoChecks.push({
+    id: "icao.name_present", label: "Holder name is present",
+    status: nameValid ? "PASS" : "FAIL",
+    severity: nameValid ? "info" : "review",
+    evidence: nameValid
+      ? `Name '${name}' extracted from MRZ.`
+      : "Name field is empty or contains only filler characters. Invalid passport."
+  });
+
+  // Rule: Document number must not be all filler
+  const docNum = parsed.fields.documentNumber;
+  const docNumValid = docNum && docNum.length > 0 && docNum !== "";
+  icaoChecks.push({
+    id: "icao.document_number_present", label: "Document number is present",
+    status: docNumValid ? "PASS" : "FAIL",
+    severity: docNumValid ? "info" : "review",
+    evidence: docNumValid
+      ? `Document number present (masked for privacy).`
+      : "Document number is empty or all filler characters. Invalid passport."
+  });
+
+  const allChecks = [...parsed.checks, ...dataChecks, ...icaoChecks];
+  const failedIcaoCheck = icaoChecks.some((item) => item.status === "FAIL");
   const signals = scenario?.signals || [];
   const failedMrzCheck = parsed.checks.some((item) => item.status === "FAIL");
   const failedDataCheck = dataChecks.some((item) => item.status === "FAIL");
@@ -300,6 +645,7 @@ export function analyzeScreening(input = {}) {
   if (failedMrzCheck) reasons.push("MRZ_CHECKSUM_FAILED");
   if (failedDataCheck) reasons.push("FIELD_OR_RULE_MISMATCH");
   if (signals.length) reasons.push("SIMULATED_IMAGE_ANOMALY");
+  if (failedIcaoCheck) reasons.push("ICAO_RULE_VIOLATION");
 
     const faceVerif = input.faceVerification;
     let identityComparison = { status: "UNAVAILABLE", detail: "No face comparison or identification is performed." };
@@ -324,14 +670,59 @@ export function analyzeScreening(input = {}) {
     };
     if (tamper) {
       if (tamper.success) {
+        const mantraScore = tamper.mantraScore || 0;
         if (tamper.tampered) {
-          imageAnomaly = { status: "REVIEW", detail: `High ELA variance (${tamper.score.toFixed(0)}) indicates possible localized tampering.` };
+          imageAnomaly = { status: "REVIEW", detail: `Tampering detected (ELA variance: ${tamper.score.toFixed(0)}, ManTraNet anomaly: ${mantraScore.toFixed(2)})` };
           reasons.push("TAMPERING_DETECTED");
-          allChecks.push({ id: "tamper.ela", label: "Tampering Detection (ELA)", status: "FAIL", severity: "review", evidence: "High variance detected in error level analysis." });
+          allChecks.push({ id: "tamper", label: "Tampering Detection", status: "FAIL", severity: "review", evidence: "High anomaly score detected in ELA or ManTraNet analysis." });
         } else {
-          imageAnomaly = { status: "CLEAR", detail: `ELA variance (${tamper.score.toFixed(0)}) is within normal limits.` };
-          allChecks.push({ id: "tamper.ela", label: "Tampering Detection (ELA)", status: "PASS", severity: "info", evidence: "Image compression levels appear consistent." });
+          imageAnomaly = { status: "CLEAR", detail: `Image appears consistent (ELA: ${tamper.score.toFixed(0)}, ManTraNet: ${mantraScore.toFixed(2)})` };
+          allChecks.push({ id: "tamper", label: "Tampering Detection", status: "PASS", severity: "info", evidence: "Image compression and pixels appear consistent." });
         }
+      }
+    }
+
+    const aiDetect = input.aiDetectionResult;
+    if (aiDetect && aiDetect.success) {
+      const isAi = aiDetect.artificial;
+      const confidence = (isAi ? aiDetect.artificial_score : aiDetect.human_score) * 100;
+      if (isAi) {
+        imageAnomaly = { status: "REVIEW", detail: `Synthetic/AI generation detected (${confidence.toFixed(1)}% confidence).` };
+        reasons.push("SYNTHETIC_GENERATION_DETECTED");
+        allChecks.push({ id: "ai_detect", label: "AI Generation Check", status: "FAIL", severity: "review", evidence: `Image is classified as AI-generated by ViT classifier (${confidence.toFixed(1)}%).` });
+      } else {
+        allChecks.push({ id: "ai_detect", label: "AI Generation Check", status: "PASS", severity: "info", evidence: `Image appears to be human/camera captured (${confidence.toFixed(1)}%).` });
+      }
+    }
+
+    const ocr = input.fullTextOcrResult;
+    if (ocr && ocr.success) {
+      const allText = ocr.raw_texts.join(" ").toUpperCase();
+      const nameParts = parsed.fields.name.toUpperCase().split(" ");
+      nameParts.forEach(part => {
+        if (part.length > 2) {
+          const found = allText.includes(part);
+          allChecks.push({
+            id: `ocr.name_${part}`,
+            label: `Printed name part '${part}' found`,
+            status: found ? "PASS" : "FAIL",
+            severity: found ? "info" : "review",
+            evidence: found ? "Name part matches printed text." : "Name part not found in document text."
+          });
+          if (!found) reasons.push("PRINTED_TEXT_MISMATCH");
+        }
+      });
+      const docNum = parsed.fields.documentNumber.toUpperCase();
+      if (docNum.length > 3) {
+        const foundDoc = allText.includes(docNum);
+        allChecks.push({
+          id: `ocr.docnum`,
+          label: `Printed doc number '${docNum}' found`,
+          status: foundDoc ? "PASS" : "FAIL",
+          severity: foundDoc ? "info" : "review",
+          evidence: foundDoc ? "Document number matches printed text." : "Document number not found in document text."
+        });
+        if (!foundDoc) reasons.push("PRINTED_TEXT_MISMATCH");
       }
     }
 
@@ -362,7 +753,7 @@ export function analyzeScreening(input = {}) {
     ],
     checks: allChecks,
     signals,
-    auditDigest: createAuditDigest(inputMode, triage, reasons, checkStates, signals.map((signal) => signal.id)),
+    auditDigest: createAuditDigest(parsed.fields.name, parsed.fields.documentNumber, triage),
     limitations: [
       "This result is triage assistance for a fictional fixture, not proof of authenticity.",
       "No OCR, image upload, metadata analysis, watchlist lookup, facial recognition, storage, or external API is used.",

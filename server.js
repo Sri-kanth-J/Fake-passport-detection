@@ -17,7 +17,7 @@ const staticFiles = new Map([
 
 function addSafetyHeaders(response) {
   response.setHeader("Cache-Control", "no-store");
-  response.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  response.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:8001; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Content-Type-Options", "nosniff");
 }
@@ -69,11 +69,6 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && requestUrl.pathname === "/api/analyze") {
       const input = await readJsonBody(request);
-      if (input.testOnly !== true) {
-        return sendJson(response, 400, {
-          error: "This demo accepts fictional test data only. Confirm the test-data checkbox before analysis."
-        });
-      }
       return sendJson(response, 200, analyzeScreening(input));
     }
 

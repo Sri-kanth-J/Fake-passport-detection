@@ -52,8 +52,11 @@ def health() -> dict:
     }
 
 
-from modules import module1_ocr, module3_tampering, module4_face
+from modules import module1_ocr, module3_tampering, module4_face, module5_full_ocr, module6_ai_detection, module7_orchestrator
 
 app.include_router(module1_ocr.router, prefix="/api/v1", tags=["OCR Extraction"])
 app.include_router(module3_tampering.router, prefix="/api/v1", tags=["Tampering Detection"])
 app.include_router(module4_face.router, prefix="/api/v1", tags=["Face Verification"])
+app.include_router(module5_full_ocr.router, prefix="/api/v1", tags=["Full Text OCR"])
+app.include_router(module6_ai_detection.router, prefix="/api/v1", tags=["AI Image Detection"])
+app.include_router(module7_orchestrator.router, prefix="/api/v1", tags=["Unified Orchestrator"])

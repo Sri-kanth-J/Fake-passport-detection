@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import cv2
 import numpy as np
@@ -18,6 +19,9 @@ async def verify_face(
     doc_bytes = await document_image.read()
     live_bytes = await live_image.read()
     
+    return await asyncio.to_thread(process_face_verification, doc_bytes, live_bytes)
+
+def process_face_verification(doc_bytes: bytes, live_bytes: bytes) -> dict:
     doc_img = cv2.imdecode(np.frombuffer(doc_bytes, np.uint8), cv2.IMREAD_COLOR)
     live_img = cv2.imdecode(np.frombuffer(live_bytes, np.uint8), cv2.IMREAD_COLOR)
     

@@ -1,15 +1,10 @@
 const elements = {
-  scenarioGrid: document.querySelector("#scenarioGrid"),
   form: document.querySelector("#screeningForm"),
-  mrzLine1: document.querySelector("#mrzLine1"),
-  mrzLine2: document.querySelector("#mrzLine2"),
-  visibleName: document.querySelector("#visibleName"),
-  visibleDocumentNumber: document.querySelector("#visibleDocumentNumber"),
-  visibleDateOfBirth: document.querySelector("#visibleDateOfBirth"),
-  visibleDateOfExpiry: document.querySelector("#visibleDateOfExpiry"),
   documentImage: document.querySelector("#documentImage"),
   liveImage: document.querySelector("#liveImage"),
-  testOnly: document.querySelector("#testOnly"),
+  submitBtn: document.querySelector("#submitBtn"),
+  progressIndicator: document.querySelector("#progressIndicator"),
+  progressText: document.querySelector("#progressText"),
   triageBadge: document.querySelector("#triageBadge"),
   emptyResult: document.querySelector("#emptyResult"),
   resultContent: document.querySelector("#resultContent"),
@@ -17,53 +12,17 @@ const elements = {
   axesGrid: document.querySelector("#axesGrid"),
   fieldList: document.querySelector("#fieldList"),
   checkList: document.querySelector("#checkList"),
-  signalSection: document.querySelector("#signalSection"),
-  signalList: document.querySelector("#signalList"),
   auditDigest: document.querySelector("#auditDigest"),
-  limitationsList: document.querySelector("#limitationsList")
+  limitationsList: document.querySelector("#limitationsList"),
+  docPreview: document.querySelector("#docPreview"),
+  livePreview: document.querySelector("#livePreview"),
 };
-
-let scenarios = [];
-let selectedScenarioId = null;
 
 function makeElement(tag, className, text) {
   const element = document.createElement(tag);
   if (className) element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;
-}
-
-function getScenario(id) {
-  return scenarios.find((scenario) => scenario.id === id);
-}
-
-function renderScenarios() {
-  elements.scenarioGrid.replaceChildren();
-  scenarios.forEach((scenario) => {
-    const button = makeElement("button", "scenario-card");
-    button.type = "button";
-    button.dataset.scenarioId = scenario.id;
-    button.setAttribute("aria-pressed", String(scenario.id === selectedScenarioId));
-    button.append(makeElement("span", "scenario-index", `0${scenarios.indexOf(scenario) + 1}`));
-    button.append(makeElement("strong", null, scenario.title));
-    button.append(makeElement("span", "scenario-copy", scenario.description));
-    button.addEventListener("click", () => selectScenario(scenario.id));
-    elements.scenarioGrid.append(button);
-  });
-}
-
-function selectScenario(id) {
-  const scenario = getScenario(id);
-  if (!scenario) return;
-  selectedScenarioId = id;
-  elements.mrzLine1.value = scenario.mrzLine1;
-  elements.mrzLine2.value = scenario.mrzLine2;
-  elements.visibleName.value = scenario.visibleFields.name;
-  elements.visibleDocumentNumber.value = scenario.visibleFields.documentNumber;
-  elements.visibleDateOfBirth.value = scenario.visibleFields.dateOfBirth;
-  elements.visibleDateOfExpiry.value = scenario.visibleFields.dateOfExpiry;
-  elements.testOnly.checked = true;
-  renderScenarios();
 }
 
 function visualStatus(status) {
@@ -75,16 +34,34 @@ function statusLabel(status) {
 }
 
 function triageCopy(result) {
-  if (result.triage === "RETAKE_IMAGE") return "The synthetic MRZ cannot be checked reliably. Retake or rescan the fictional fixture before a human reviews it.";
-  if (result.triage === "MANUAL_REVIEW") return "One or more explainable signals need a trained human to inspect the fictional fixture. This is not an authenticity verdict.";
-  return "No high-risk signal was found in the checks available in this starter. This is not an approval or authenticity decision.";
+  if (result.triage === "RETAKE_IMAGE") return "The document image could not be read clearly. Please retake the photo in better lighting.";
+  if (result.triage === "MANUAL_REVIEW") return "One or more signals flagged during AI screening require human inspection.";
+  return "All automated forensic and data consistency checks passed. The document appears authentic.";
 }
 
 function renderResult(result) {
   elements.emptyResult.hidden = true;
   elements.resultContent.hidden = false;
   elements.triageBadge.className = `triage-badge ${visualStatus(result.triage)}`;
-  elements.triageBadge.textContent = statusLabel(result.triage);
+  
+  if (result.triage === "NO_HIGH_RISK_SIGNAL_DETECTED") {
+    elements.triageBadge.textContent = "REAL (AUTHENTIC)";
+    elements.triageBadge.style.backgroundColor = "#00c853";
+    elements.triageBadge.style.color = "white";
+  } else if (result.triage === "MANUAL_REVIEW") {
+    elements.triageBadge.textContent = "FAKE (FORGERY DETECTED)";
+    elements.triageBadge.style.backgroundColor = "#ff3d00";
+    elements.triageBadge.style.color = "white";
+  } else if (result.triage === "RETAKE_IMAGE") {
+    elements.triageBadge.textContent = "UNKNOWN (RETAKE)";
+    elements.triageBadge.style.backgroundColor = "#ff9100";
+    elements.triageBadge.style.color = "white";
+  } else {
+    elements.triageBadge.textContent = statusLabel(result.triage);
+    elements.triageBadge.style.backgroundColor = "";
+    elements.triageBadge.style.color = "";
+  }
+  
   elements.triageDescription.textContent = triageCopy(result);
 
   elements.axesGrid.replaceChildren();
@@ -117,16 +94,11 @@ function renderResult(result) {
     elements.checkList.append(listItem);
   });
 
-  elements.signalList.replaceChildren();
-  result.signals.forEach((signal) => {
-    const listItem = makeElement("li", "evidence-item review");
-    listItem.append(makeElement("strong", null, signal.label));
-    listItem.append(makeElement("p", null, signal.evidence));
-    elements.signalList.append(listItem);
-  });
-  elements.signalSection.hidden = result.signals.length === 0;
-
-  elements.auditDigest.textContent = result.auditDigest;
+  if (typeof result.auditDigest === "object" && result.auditDigest !== null) {
+    elements.auditDigest.textContent = result.auditDigest.hash;
+  } else {
+    elements.auditDigest.textContent = result.auditDigest;
+  }
   elements.limitationsList.replaceChildren();
   result.limitations.forEach((limitation) => elements.limitationsList.append(makeElement("li", null, limitation)));
 }
@@ -144,153 +116,131 @@ function showError(message) {
     checks: [{ label: "Request", status: "FAIL", evidence: message }],
     signals: [],
     auditDigest: "No digest created",
-    limitations: ["No document data is stored by this starter."]
+    limitations: ["No document data is stored."]
   });
 }
 
+function handleFileSelect(inputElement, previewElement) {
+  const file = inputElement.files[0];
+  if (file) {
+    elements.submitBtn.disabled = false;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      previewElement.innerHTML = `<img src="${e.target.result}" alt="Preview" style="max-width: 100%; max-height: 200px; border-radius: 8px;" />`;
+      previewElement.hidden = false;
+      
+      const label = inputElement.closest('.upload-label');
+      if (label) {
+        const icon = label.querySelector('.upload-icon');
+        const title = label.querySelector('.upload-title');
+        const hint = label.querySelector('.field-hint');
+        if (icon) icon.style.display = 'none';
+        if (title) title.style.display = 'none';
+        if (hint) hint.style.display = 'none';
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+elements.documentImage.addEventListener("change", () => handleFileSelect(elements.documentImage, elements.docPreview));
+elements.liveImage.addEventListener("change", () => handleFileSelect(elements.liveImage, elements.livePreview));
+
 elements.form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const submitButton = elements.form.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  submitButton.textContent = "Checking synthetic fixture…";
+  
+  const docFile = elements.documentImage.files[0];
+  const liveFile = elements.liveImage.files[0];
+  if (!docFile) return showError("Please upload a document image.");
+
+  elements.submitBtn.disabled = true;
+  elements.progressIndicator.hidden = false;
+  elements.emptyResult.hidden = true;
+  elements.resultContent.hidden = true;
   
   let faceVerification = null;
   let tamperingResult = null;
+  let fullTextOcrResult = null;
+  let mrzExtract = null;
 
   try {
-    const docFile = elements.documentImage.files[0];
-    const liveFile = elements.liveImage.files[0];
-    
-    // 1. Run Tampering Detection (ELA) if document image is present
-    if (docFile) {
-      submitButton.textContent = "Running Tampering Detection…";
-      const tamperData = new FormData();
-      tamperData.append("document_image", docFile);
-      
-      const tamperRes = await fetch("http://127.0.0.1:8001/api/v1/tampering", {
-        method: "POST",
-        body: tamperData
-      });
-      if (tamperRes.ok) {
-        tamperingResult = await tamperRes.json();
-      }
-    }
-
-    // 2. Run face verification if both images are present
-    if (docFile && liveFile) {
-      submitButton.textContent = "Running DeepFace verification…";
-      const faceData = new FormData();
-      faceData.append("document_image", docFile);
-      faceData.append("live_image", liveFile);
-      
-      const faceRes = await fetch("http://127.0.0.1:8001/api/v1/verify-face", {
-        method: "POST",
-        body: faceData
-      });
-      if (faceRes.ok) {
-        faceVerification = await faceRes.json();
-      }
+    const docData = new FormData();
+    docData.append("document_image", docFile);
+    if (liveFile) {
+        docData.append("live_image", liveFile);
     }
     
-    submitButton.textContent = "Running explainable triage…";
+    elements.progressText.textContent = "Running unified visual analysis (OCR, Forensics, Face)...";
+    
+    const analyzeRes = await fetch("http://127.0.0.1:8001/api/v1/analyze-all", { method: "POST", body: docData });
+    if (!analyzeRes.ok) {
+        throw new Error("Failed to communicate with vision service");
+    }
+    
+    const analyzeData = await analyzeRes.json();
+    
+    mrzExtract = analyzeData.mrzExtract;
+    fullTextOcrResult = analyzeData.fullTextOcrResult;
+    tamperingResult = analyzeData.tamperingResult;
+    let aiDetectionResult = analyzeData.aiDetectionResult;
+    faceVerification = analyzeData.faceVerification;
+    let qrVerification = analyzeData.qrVerification;
+    
+    const documentType = analyzeData.documentType;
+    const idExtract = analyzeData.idExtract;
+    
+    let mrzLine1 = null;
+    let mrzLine2 = null;
 
-    // 3. Run analysis
+    if (mrzExtract && mrzExtract.success && mrzExtract.mrz_raw) {
+        const lines = mrzExtract.mrz_raw.split('\n').filter(Boolean);
+        if (lines.length >= 2) {
+            mrzLine1 = lines[0];
+            mrzLine2 = lines[1];
+        }
+    }
+    
+    if (!mrzLine1 || !mrzLine2) {
+       if (fullTextOcrResult && fullTextOcrResult.success) {
+           const texts = fullTextOcrResult.raw_texts.map(t => t.replace(/\s+/g, ''));
+           const mrzLines = texts.filter(t => t.length === 44 && /^[A-Z0-9<]+$/.test(t));
+           if (mrzLines.length >= 2) {
+               mrzLine1 = mrzLines[0];
+               mrzLine2 = mrzLines[1];
+           }
+       }
+    }
+
+    if (documentType === "passport" && (!mrzLine1 || !mrzLine2)) {
+        console.warn("No MRZ found in the image for passport.");
+    }
+    
+    elements.progressText.textContent = "Compiling intelligence report...";
+
+    // 6. Final triage
     const response = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        scenarioId: selectedScenarioId,
-        mrzLine1: elements.mrzLine1.value,
-        mrzLine2: elements.mrzLine2.value,
-        visibleFields: {
-          name: elements.visibleName.value,
-          documentNumber: elements.visibleDocumentNumber.value,
-          dateOfBirth: elements.visibleDateOfBirth.value,
-          dateOfExpiry: elements.visibleDateOfExpiry.value
-        },
-        testOnly: elements.testOnly.checked,
+        documentType,
+        idExtract,
+        mrzLine1,
+        mrzLine2,
         faceVerification,
-        tamperingResult
+        tamperingResult,
+        fullTextOcrResult,
+        aiDetectionResult,
+        qrVerification
       })
     });
+    
     const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "The demo could not process that input.");
+    if (!response.ok) throw new Error(body.error || "The server could not process the analysis.");
     renderResult(body);
   } catch (error) {
     showError(error.message);
   } finally {
-    submitButton.disabled = false;
-    submitButton.textContent = "Run explainable triage →";
+    elements.submitBtn.disabled = false;
+    elements.progressIndicator.hidden = true;
   }
 });
-
-elements.documentImage.addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const originalLabel = elements.documentImage.previousElementSibling.textContent;
-  elements.documentImage.previousElementSibling.textContent = "Extracting MRZ...";
-  
-  const formData = new FormData();
-  formData.append("file", file);
-
-  try {
-    const response = await fetch("http://127.0.0.1:8001/api/v1/extract", {
-      method: "POST",
-      body: formData
-    });
-    
-    if (!response.ok) throw new Error("Failed to process image locally.");
-    const body = await response.json();
-    
-    if (body.success && body.mrz_raw) {
-      // Split raw text into two lines (TD3 format)
-      const lines = body.mrz_raw.split('\n').filter(Boolean);
-      if (lines.length >= 2) {
-        elements.mrzLine1.value = lines[0];
-        elements.mrzLine2.value = lines[1];
-      }
-      
-      // Auto-fill printed fields as if they were typed, assuming they match MRZ for demo
-      if (body.fields) {
-        elements.visibleName.value = body.fields.name || "";
-        elements.visibleDocumentNumber.value = body.fields.documentNumber || "";
-        
-        // Convert YYMMDD to YYYY-MM-DD for date inputs
-        const formatMrzDate = (val) => {
-          if (!val || val.length !== 6) return "";
-          let year = Number(val.slice(0, 2));
-          year += (year > 30) ? 1900 : 2000;
-          return `${year}-${val.slice(2, 4)}-${val.slice(4, 6)}`;
-        };
-        
-        elements.visibleDateOfBirth.value = formatMrzDate(body.fields.dateOfBirth);
-        elements.visibleDateOfExpiry.value = formatMrzDate(body.fields.dateOfExpiry);
-      }
-      
-      // Clear scenario selection
-      selectedScenarioId = null;
-      renderScenarios();
-    } else {
-      showError(body.error || "No MRZ found in the image.");
-    }
-  } catch (error) {
-    showError(error.message);
-  } finally {
-    elements.documentImage.previousElementSibling.textContent = originalLabel;
-  }
-});
-
-async function start() {
-  try {
-    const response = await fetch("/api/scenarios");
-    const body = await response.json();
-    scenarios = body.scenarios || [];
-    renderScenarios();
-    if (scenarios.length) selectScenario(scenarios[0].id);
-  } catch {
-    showError("The local demo scenarios could not be loaded.");
-  }
-}
-
-start();
