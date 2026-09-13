@@ -23,9 +23,9 @@ def classify_document(ocr_text: str) -> str:
         
     # 5. Passport
     # If the MRZ pattern exists or "REPUBLIC OF INDIA" / "PASSPORT" is present.
-    # Note: MRZ usually has standard <<< characters. We will check for basic passport strings first,
-    # but also a general 'P<' to cover global passports.
-    if "PASSPORT" in text_upper or "P<" in text_upper or "P<IND" in text_upper:
+    # Note: OCR often adds spaces, so we check for space-stripped versions too.
+    text_no_spaces = text_upper.replace(" ", "")
+    if "PASSPORT" in text_upper or "REPUBLIC OF INDIA" in text_upper or "P<" in text_no_spaces or "PKIND" in text_no_spaces:
         return "passport"
         
     return "unknown"

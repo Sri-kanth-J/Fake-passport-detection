@@ -168,10 +168,23 @@ def read_qr_numeric_string_from_image(image_bytes: bytes) -> Optional[str]:
 
     arr = np.frombuffer(image_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    
     if img is None:
         return None
+        
+    try:
+        import zxingcpp
+        # zxing-cpp is highly robust and doesn't require model loading
+        results = zxingcpp.read_barcodes(img)
+        for r in results:
+            if r.text:
+                return r.text
+    except Exception as e:
+        print(f"zxingcpp Error: {e}")
+        
+    # Fallback to standard detector
     detector = cv2.QRCodeDetector()
-    data, _points, _ = detector.detectAndDecode(img)
+    data, _, _ = detector.detectAndDecode(img)
     return data or None
 
 

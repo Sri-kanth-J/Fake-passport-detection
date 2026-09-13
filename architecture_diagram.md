@@ -8,7 +8,7 @@ This document details the complete end-to-end architecture of the **Document Int
 graph TD
     %% Frontend Layer
     subgraph Frontend [Browser Client / Frontend]
-        UI[app.js UI & Dropzones]
+        UI[app.js UI & Dropzones<br/>Front, Back, Selfie]
         State[Form State & Pre-validation]
     end
 
@@ -32,6 +32,7 @@ graph TD
         Face[module4_face.py]
         FullOCR[module5_full_ocr.py]
         AIDetect[module6_ai_detection.py]
+        QRVerify[module10_aadhaar_qr_verify.py - zxing-cpp & RSA]
     end
 
     %% Flow Connections
@@ -42,8 +43,9 @@ graph TD
     Orchestrator -->|3b. dispatch| Tamper
     Orchestrator -->|3c. dispatch| Face
     Orchestrator -->|3d. dispatch| AIDetect
+    Orchestrator -->|3e. dispatch| QRVerify
     
-    FullOCR -->|4. OCR Text| Classifier
+    FullOCR -->|4. Merged Front+Back OCR Text| Classifier
     Classifier -->|5a. If Passport| OCR
     Classifier -->|5b. If Domestic ID| IndianIDs
     
@@ -52,6 +54,7 @@ graph TD
     Tamper -.-> Orchestrator
     Face -.-> Orchestrator
     AIDetect -.-> Orchestrator
+    QRVerify -.-> Orchestrator
     
     Orchestrator -->|6. Unified JSON Results| Triage
     Triage -->|7. Triage Engine & Rules| Privacy
@@ -73,43 +76,47 @@ sequenceDiagram
     participant Node as Node.js API (server.js)
     participant Python as Python Orchestrator (module7)
     participant ML as ML Models (ThreadPool)
+    participant QR as Cryptography (module10)
     
-    User->>App: Drops Document & Selfie
+    User->>App: Drops Doc Front, Doc Back (Optional), & Selfie
     User->>App: Clicks "Run AI Screening"
     
     %% Request to Node
-    App->>Node: POST /api/analyze<br/>(FormData: documentImage, liveImage)
+    App->>Node: POST /api/analyze<br/>(FormData: documentImage, document_back_image, liveImage)
     Node->>Python: POST /api/v1/analyze-all<br/>(Forward images as raw bytes)
     
     %% Python internal dispatch - Phase 1
     activate Python
     note over Python, ML: asyncio.create_task() across ThreadPoolExecutor
-    Python->>ML: Task A: Full OCR (PaddleOCR)
-    Python->>ML: Task B: Tampering (ManTraNet filters)
-    Python->>ML: Task C: DeepFace (document vs live)
-    Python->>ML: Task D: AI Detection (5-Gate Engine)
+    Python->>ML: Task A: Full OCR on Front (PaddleOCR)
+    Python->>ML: Task B: Full OCR on Back (PaddleOCR)
+    Python->>ML: Task C: Tampering (ManTraNet filters)
+    Python->>ML: Task D: DeepFace (document vs live)
+    Python->>ML: Task E: AI Detection (5-Gate Engine)
+    Python->>QR: Task F: QR Read (zxing-cpp) & RSA Signature Check
     
     %% Classification Phase
-    ML-->>Python: Return Full OCR Text
+    ML-->>Python: Return OCR Text (Merged Front + Back)
     Python->>Python: classify_document(ocr_text)
     
     %% Phase 2 extraction
     alt is passport
-        Python->>ML: Task E: PassportEye MRZ Extraction
+        Python->>ML: Task G: PassportEye MRZ Extraction
     else is indian_id
         Python->>Python: parse_indian_id(ocr_text, doc_type) + Verhoeff
     end
     
     ML-->>Python: Return extracted JSON/Signals
+    QR-->>Python: Return Signature Pass/Fail
     deactivate Python
     
     %% Python to Node
-    Python-->>Node: Return merged JSON (docType, IDs, ML signals)
+    Python-->>Node: Return merged JSON (docType, IDs, PIN, ML signals, QR)
     
     %% Node Triage
     activate Node
     note over Node: screening.js Triage Rules
-    Node->>Node: Weigh rules based on docType (MRZ vs Regex)
+    Node->>Node: Weigh rules based on docType (MRZ vs Regex vs QR Signature)
     Node->>Node: Calculate Score -> Decide "MANUAL_REVIEW" vs "REAL"
     
     %% Privacy & Crypto
@@ -137,13 +144,13 @@ graph TD
     Preprocess --> Gate2[Gate 2: Screen/Moire Detection]
     Preprocess --> Gate3[Gate 3: Noise Analysis]
     Preprocess --> Gate4[Gate 4: Frequency/Edges]
-    Preprocess --> Gate5[Gate 5: Synthetic Identity (FFT)]
+    Preprocess --> Gate5[Gate 5: Synthetic Identity FFT <br/>Threshold: 250.0]
     
     Gate1 --> Agg[Aggregate Results]
     Gate2 --> Agg
     Gate3 --> Agg
     Gate4 --> Agg
-    Gate5 -.-> |Weight 0.0 (Info Only)| Agg
+    Gate5 -.-> |Weight 0.0 Info Only| Agg
     
     Agg --> Score[Calculate Total AI Risk Score]
     Score --> Output[{"is_ai_generated": bool, "confidence": float, "details": [...]}]
@@ -154,6 +161,6 @@ graph TD
 The architecture is explicitly designed to meet DPDP / GDPR / Aadhaar Act constraints regarding biometric handling:
 
 1. **Memory-Only Processing**: Images are buffered in RAM during the Node.js `multer` upload and `httpx` forward. No images are ever saved to disk.
-2. **Deterministic Triage Isolation**: The Node.js triage server never sees raw ML tensor data or image buffers during decision making—it strictly evaluates discrete output signals (e.g., `confidence: 0.82`).
+2. **Deterministic Triage Isolation**: The Node.js triage server never sees raw ML tensor data or image buffers during decision making—it strictly evaluates discrete output signals (e.g., `confidence: 0.82`, `signature_valid: True`).
 3. **Data Minimization (Masking)**: Aadhaar, PAN, Voter ID, and Driving Licence numbers are immediately masked by the Node server (e.g. `••••••••1234`). The raw ID is NEVER transmitted back to the browser or stored in plaintext.
 4. **Cryptographic Auditing (HMAC)**: Instead of logging PII for auditing, the system generates a **deterministic HMAC-SHA256 digest** using a secured environment secret. This allows investigators to correlate repeat usages of a forged ID across multiple transactions without ever exposing the raw plaintext ID to an outside observer.

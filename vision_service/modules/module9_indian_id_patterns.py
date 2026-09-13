@@ -39,17 +39,30 @@ def parse_indian_id(ocr_text: str, doc_type: str) -> dict:
     Parses OCR text for Indian ID patterns and extracts relevant numbers.
     """
     # Normalize text by removing spaces and newlines for easier regex matching
-    normalized = re.sub(r'\s+', '', ocr_text).upper()
+    text_upper = ocr_text.upper()
+    normalized = re.sub(r'\s+', '', text_upper)
     
     result = {
         "document_type": doc_type,
         "id_number": None,
         "is_valid": False,
-        "reason": "Extraction failed"
+        "reason": "Extraction failed",
+        "pin_code": None
     }
+    
+    # Optional Address/PIN extraction (common on back of Indian IDs)
+    pin_match = re.search(r'\b[1-9][0-9]{5}\b', ocr_text)
+    if pin_match:
+        result["pin_code"] = pin_match.group(0)
     
     if doc_type == "aadhaar":
         # Aadhaar: 12 digits, first digit 2-9
+        # Sanity check: must contain Aadhaar-related keywords
+        if "UNIQUE" not in text_upper and "AUTHORITY" not in text_upper and "GOVERNMENT" not in text_upper and "INDIA" not in text_upper and "आधार" not in text_upper:
+            result["is_valid"] = False
+            result["reason"] = "Document does not appear to be an Aadhaar card (missing keywords)"
+            return result
+
         match = re.search(r'[2-9][0-9]{11}', normalized)
         if match:
             uid = match.group(0)
@@ -71,8 +84,19 @@ def parse_indian_id(ocr_text: str, doc_type: str) -> dict:
             
     elif doc_type == "voter_id":
         # Voter ID (EPIC): 3 letters, 7 digits (though some are longer, this matches the standard block)
+        if "ELECTION" not in text_upper and "COMMISSION" not in text_upper and "EPIC" not in text_upper and "ELECTOR" not in text_upper:
+            result["is_valid"] = False
+            result["reason"] = "Document does not appear to be a Voter ID (missing keywords)"
+            return result
+            
         match = re.search(r'[A-Z]{3}[0-9]{7}', normalized)
         if match:
+            # Avoid matching Aadhaar VID by ensuring it doesn't start with VID
+            if match.group(0).startswith("VID"):
+                result["is_valid"] = False
+                result["reason"] = "Matched Aadhaar VID instead of EPIC"
+                return result
+                
             result["id_number"] = match.group(0)
             result["is_valid"] = True
             result["reason"] = "Format matches standard EPIC structure"

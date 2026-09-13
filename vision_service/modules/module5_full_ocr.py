@@ -52,6 +52,7 @@ def process_full_ocr(doc_bytes: bytes) -> dict:
                 
         return {
             "success": True,
+            "full_text": " ".join([t["text"] for t in texts]),
             "raw_texts": [t["text"] for t in texts],
             "details": texts
         }

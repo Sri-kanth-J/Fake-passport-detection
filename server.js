@@ -67,9 +67,34 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { scenarios: listDemoScenarios() });
     }
 
+const screeningHistory = [];
+
+    if (request.method === "GET" && requestUrl.pathname === "/api/analytics") {
+      const summary = {
+        total: screeningHistory.length,
+        riskDistribution: {
+          green: screeningHistory.filter(h => h.triage === "NO_HIGH_RISK_SIGNAL_DETECTED").length,
+          amber: screeningHistory.filter(h => h.triage === "MANUAL_REVIEW").length,
+          red: screeningHistory.filter(h => h.triage === "STOP_TRANSACTION").length
+        },
+        recent: screeningHistory.slice(-10).reverse() // Last 10 items
+      };
+      return sendJson(response, 200, summary);
+    }
+
     if (request.method === "POST" && requestUrl.pathname === "/api/analyze") {
       const input = await readJsonBody(request);
-      return sendJson(response, 200, analyzeScreening(input));
+      const result = analyzeScreening(input);
+      
+      // Store lightweight representation in history
+      screeningHistory.push({
+        id: result.screeningId,
+        timestamp: result.auditDigest.timestamp,
+        triage: result.triage,
+        docType: input.documentType || "passport"
+      });
+      
+      return sendJson(response, 200, result);
     }
 
     if (request.method === "GET" && staticFiles.has(requestUrl.pathname)) {

@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from typing import Optional
 
 # Import the core logic functions from the other modules
@@ -17,7 +17,9 @@ router = APIRouter()
 @router.post("/analyze-all")
 async def analyze_all(
     document_image: UploadFile = File(...),
-    live_image: Optional[UploadFile] = File(None)
+    document_back_image: Optional[UploadFile] = File(None),
+    live_image: Optional[UploadFile] = File(None),
+    manual_document_type: Optional[str] = Form(None)
 ):
     """
     Unified entrypoint for the Python Vision Microservice.
@@ -28,10 +30,13 @@ async def analyze_all(
         raise HTTPException(status_code=400, detail="No document image provided")
         
     doc_bytes = await document_image.read()
+    doc_back_bytes = await document_back_image.read() if document_back_image else None
     live_bytes = await live_image.read() if live_image else None
 
     # Phase 1: Launch independent concurrent tasks
     paddle_task = asyncio.create_task(asyncio.to_thread(process_full_ocr, doc_bytes))
+    paddle_back_task = asyncio.create_task(asyncio.to_thread(process_full_ocr, doc_back_bytes)) if doc_back_bytes else None
+    
     tamper_task = asyncio.create_task(asyncio.to_thread(process_tampering, doc_bytes))
     ai_task = asyncio.create_task(asyncio.to_thread(detect_ai_logic, doc_bytes))
     
@@ -39,9 +44,14 @@ async def analyze_all(
     if live_bytes:
         face_task = asyncio.create_task(asyncio.to_thread(process_face_verification, doc_bytes, live_bytes))
 
-    # Task F: QR Code extraction (fast, synchronous string read from image bytes, so we can wrap it)
+    # Task F: QR Code extraction
     async def run_qr():
-        qr_string = read_qr_numeric_string_from_image(doc_bytes)
+        qr_string = None
+        if doc_back_bytes:
+            qr_string = read_qr_numeric_string_from_image(doc_back_bytes)
+        if not qr_string:
+            qr_string = read_qr_numeric_string_from_image(doc_bytes)
+            
         if not qr_string:
             return {"signature_valid": None, "reason": "No readable QR code found in image.", "fields": {}}
         # Verify the secure QR string
@@ -55,16 +65,24 @@ async def analyze_all(
         
     qr_task = asyncio.create_task(run_qr())
 
-    # Wait for Full OCR to finish for classification
     try:
         full_ocr_result = await paddle_task
+        if paddle_back_task:
+            back_ocr_result = await paddle_back_task
+            if back_ocr_result.get("success"):
+                full_ocr_result["full_text"] += " " + back_ocr_result.get("full_text", "")
+                if "raw_texts" in back_ocr_result:
+                    full_ocr_result["raw_texts"].extend(back_ocr_result["raw_texts"])
     except Exception as e:
         full_ocr_result = {"success": False, "error": str(e), "full_text": ""}
 
     ocr_text = full_ocr_result.get("full_text", "")
     
     # Classify Document
-    doc_type = classify_document(ocr_text)
+    if manual_document_type and manual_document_type != "auto":
+        doc_type = manual_document_type
+    else:
+        doc_type = classify_document(ocr_text)
 
     # Phase 2: Launch ID extraction based on doc type
     if doc_type == "passport":

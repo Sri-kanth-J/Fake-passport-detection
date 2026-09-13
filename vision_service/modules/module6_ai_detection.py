@@ -460,7 +460,7 @@ def gate_5_synthetic(img_cv: np.ndarray) -> dict:
     result["details"]["high_freq_magnitude"] = round(float(high_freq_magnitude), 3)
     
     # Diffusion and GANs often leave unnatural high-frequency patterns
-    if high_freq_magnitude > 150.0:
+    if high_freq_magnitude > 250.0:
         result["score"] = 0.9
         result["verdict"] = "SUSPICIOUS_HIGH_FREQUENCY"
     else:

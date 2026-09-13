@@ -31,13 +31,16 @@ def process_face_verification(doc_bytes: bytes, live_bytes: bytes) -> dict:
             img1_path=doc_img, 
             img2_path=live_img, 
             detector_backend="retinaface", 
-            enforce_detection=False
+            enforce_detection=False,
+            anti_spoofing=True
         )
+        
         return {
             "success": True, 
-            "match": result["verified"], 
-            "distance": result["distance"], 
-            "threshold": result["threshold"]
+            "match": result.get("verified", False), 
+            "distance": result.get("distance", 0.0), 
+            "threshold": result.get("threshold", 0.0),
+            "is_real": result.get("is_real", True) # Default true if model doesn't support it
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Face verification failed: {str(e)}")

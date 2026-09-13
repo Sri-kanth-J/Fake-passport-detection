@@ -48,14 +48,21 @@ def process_mrz(image_bytes: bytes) -> dict:
             result, _ = ocr(img)
             mrz_lines = []
             if result:
+                import re
                 for line in result:
-                    text = line[1].replace(" ", "")
+                    text = line[1].replace(" ", "").upper()
+                    # Clean common OCR misreads for chevron
+                    text = text.replace("(", "<").replace(")", "<").replace("[", "<").replace("]", "<").replace("{", "<").replace("}", "<")
                     # MRZ lines usually have many '<' characters and are long
-                    if "<" in text and len(text) > 20:
+                    if "<" in text and len(text) > 30:
+                        # Strip out completely invalid characters
+                        text = re.sub(r'[^A-Z0-9<]', '', text)
+                        # Passports (TD3) strictly require 44 characters. Pad or truncate.
+                        text = text[:44].ljust(44, "<")
                         mrz_lines.append(text)
             if len(mrz_lines) >= 2:
-                # Assuming TD3 (2 lines) or TD1 (3 lines)
-                mrz_text = "\n".join(mrz_lines)
+                # Take the last 2 lines (MRZ is always at the bottom)
+                mrz_text = "\n".join(mrz_lines[-2:])
         except Exception:
             pass
 

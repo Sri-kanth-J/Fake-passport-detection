@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const MRZ_LINE_LENGTH = 44;
+
+let previousHash = "0000000000000000000000000000000000000000000000000000000000000000"; // Genesis Block Hash
 const TEST_DATA_NOTICE = "Synthetic demo data only — not a real travel-document verification service.";
 
 // ─── ICAO 9303 Worldwide Passport Rules ───────────────────────────────────────
@@ -314,8 +316,9 @@ function maskIdNumber(idStr, docType) {
 function createAuditDigest(name, documentNumber, verdict) {
   const timestamp = new Date().toISOString();
   const salt = randomUUID();
-  const payload = `${name}|${documentNumber}|${verdict}|${timestamp}|${salt}`;
+  const payload = `${previousHash}|${name}|${documentNumber}|${verdict}|${timestamp}|${salt}`;
   const hash = createHash("sha256").update(payload).digest("hex");
+  previousHash = hash; // Update the chain
   
   return {
     hash,
@@ -413,21 +416,29 @@ function enrichWithBackendResults(result, input) {
     // For now we rely on faceVerif.match which is provided by the backend,
     // but we adjust the severity/status based on document type.
     
-    if (faceVerif.success && isMatch === true) {
-      result.analysisAxes.identityComparison = { status: "CLEAR", detail: `Face matches document photo. Distance: ${faceVerif.distance.toFixed(2)}` };
-      result.checks.push({ id: "face.match", label: "Face verification", status: "PASS", severity: "info", evidence: "DeepFace matching successful." });
-    } else if (faceVerif.success && isMatch === false) {
-      const isLowQualityDoc = ["aadhaar", "pan"].includes(docType);
-      const isBorderline = faceVerif.distance > 0.4 && faceVerif.distance < 0.65; // example borderline heuristic
+    if (faceVerif.is_real === false) {
+      result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Face spoofing detected. Live image failed liveness check.` };
+      result.reasonCodes.push("LIVENESS_FAILED");
+      result.checks.push({ id: "face.liveness", label: "Liveness & Anti-Spoofing", status: "FAIL", severity: "review", evidence: "Live selfie appears to be a spoof (photo or mask)." });
+    } else {
+      result.checks.push({ id: "face.liveness", label: "Liveness & Anti-Spoofing", status: "PASS", severity: "info", evidence: "Selfie passes liveness check." });
       
-      if (isLowQualityDoc && isBorderline) {
-        result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Inconclusive face match due to document photo quality. Distance: ${faceVerif.distance.toFixed(2)}` };
-        // We do not add FACE_MISMATCH reason code, we treat it as inconclusive
-        result.checks.push({ id: "face.match", label: "Face verification (Inconclusive)", status: "FAIL", severity: "review", evidence: "Face distance is borderline; given document type, this may be a photo quality artifact." });
-      } else {
-        result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Face mismatch. Distance: ${faceVerif.distance.toFixed(2)}` };
-        result.reasonCodes.push("FACE_MISMATCH");
-        result.checks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Document photo and live selfie do not match." });
+      if (faceVerif.success && isMatch === true) {
+        result.analysisAxes.identityComparison = { status: "CLEAR", detail: `Face matches document photo. Distance: ${faceVerif.distance.toFixed(2)}` };
+        result.checks.push({ id: "face.match", label: "Face verification", status: "PASS", severity: "info", evidence: "DeepFace matching successful." });
+      } else if (faceVerif.success && isMatch === false) {
+        const isLowQualityDoc = ["aadhaar", "pan"].includes(docType);
+        const isBorderline = faceVerif.distance > 0.4 && faceVerif.distance < 0.65; // example borderline heuristic
+        
+        if (isLowQualityDoc && isBorderline) {
+          result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Inconclusive face match due to document photo quality. Distance: ${faceVerif.distance.toFixed(2)}` };
+          // We do not add FACE_MISMATCH reason code, we treat it as inconclusive
+          result.checks.push({ id: "face.match", label: "Face verification (Inconclusive)", status: "FAIL", severity: "review", evidence: "Face distance is borderline; given document type, this may be a photo quality artifact." });
+        } else {
+          result.analysisAxes.identityComparison = { status: "REVIEW", detail: `Face mismatch. Distance: ${faceVerif.distance.toFixed(2)}` };
+          result.reasonCodes.push("FACE_MISMATCH");
+          result.checks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Document photo and live selfie do not match." });
+        }
       }
     }
   }
@@ -468,8 +479,9 @@ export function analyzeScreening(input = {}) {
 
   // --- NON-PASSPORT INDIAN IDs ---
   if (docType !== "passport") {
-    const idExtract = input.idExtract || { is_valid: false, reason: "No extraction payload", id_number: "UNKNOWN" };
+    const idExtract = input.idExtract || { is_valid: false, reason: "No extraction payload", id_number: "UNKNOWN", pin_code: null };
     const rawId = idExtract.id_number || "UNKNOWN";
+    const pinCode = idExtract.pin_code;
     
     const isValid = idExtract.is_valid;
     const reasons = [];
@@ -502,7 +514,6 @@ export function analyzeScreening(input = {}) {
           detail: isValid ? "Validation algorithm passed." : "Validation failed."
         },
         imageAnomaly: { status: "NOT_ASSESSED", detail: "" },
-        identityComparison: { status: "UNAVAILABLE", detail: "" }
       },
       fields: [
         { id: "documentType", label: "Document Type", maskedValue: docType.toUpperCase(), source: "Classifier" },
@@ -516,6 +527,10 @@ export function analyzeScreening(input = {}) {
         "A trained human must make any real-world decision."
       ]
     };
+    
+    if (pinCode) {
+        result.fields.push({ id: "pinCode", label: "Address PIN", maskedValue: pinCode, source: "OCR Extraction (Back)" });
+    }
     
     return enrichWithBackendResults(result, input);
   }
@@ -650,16 +665,24 @@ export function analyzeScreening(input = {}) {
     const faceVerif = input.faceVerification;
     let identityComparison = { status: "UNAVAILABLE", detail: "No face comparison or identification is performed." };
     if (faceVerif) {
-      if (faceVerif.success && faceVerif.match === true) {
-        identityComparison = { status: "CLEAR", detail: `Face matches document photo. Distance: ${faceVerif.distance.toFixed(2)}` };
-        allChecks.push({ id: "face.match", label: "Face verification", status: "PASS", severity: "info", evidence: "DeepFace matching successful." });
-      } else if (faceVerif.success && faceVerif.match === false) {
-        identityComparison = { status: "REVIEW", detail: `Face mismatch. Distance: ${faceVerif.distance.toFixed(2)}` };
-        reasons.push("FACE_MISMATCH");
-        allChecks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Document photo and live selfie do not match." });
+      if (faceVerif.is_real === false) {
+        identityComparison = { status: "REVIEW", detail: `Face spoofing detected. Live image failed liveness check.` };
+        reasons.push("LIVENESS_FAILED");
+        allChecks.push({ id: "face.liveness", label: "Liveness & Anti-Spoofing", status: "FAIL", severity: "review", evidence: "Live selfie appears to be a spoof (photo or mask)." });
       } else {
-        identityComparison = { status: "REVIEW", detail: "Face verification failed to run." };
-        allChecks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Failed to detect face or run verification." });
+        allChecks.push({ id: "face.liveness", label: "Liveness & Anti-Spoofing", status: "PASS", severity: "info", evidence: "Selfie passes liveness check." });
+        
+        if (faceVerif.success && faceVerif.match === true) {
+          identityComparison = { status: "CLEAR", detail: `Face matches document photo. Distance: ${faceVerif.distance.toFixed(2)}` };
+          allChecks.push({ id: "face.match", label: "Face verification", status: "PASS", severity: "info", evidence: "DeepFace matching successful." });
+        } else if (faceVerif.success && faceVerif.match === false) {
+          identityComparison = { status: "REVIEW", detail: `Face mismatch. Distance: ${faceVerif.distance.toFixed(2)}` };
+          reasons.push("FACE_MISMATCH");
+          allChecks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Document photo and live selfie do not match." });
+        } else {
+          identityComparison = { status: "REVIEW", detail: "Face verification failed to run." };
+          allChecks.push({ id: "face.match", label: "Face verification", status: "FAIL", severity: "review", evidence: "Failed to detect face or run verification." });
+        }
       }
     }
 

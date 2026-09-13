@@ -15,7 +15,18 @@ const elements = {
   auditDigest: document.querySelector("#auditDigest"),
   limitationsList: document.querySelector("#limitationsList"),
   docPreview: document.querySelector("#docPreview"),
+  documentBackImage: document.querySelector("#documentBackImage"),
+  docBackPreview: document.querySelector("#docBackPreview"),
   livePreview: document.querySelector("#livePreview"),
+  tabButtons: document.querySelectorAll('.tab-button'),
+  tabContents: document.querySelectorAll('.tab-content'),
+  downloadPdfBtn: document.querySelector('#downloadPdfBtn'),
+  refreshAnalyticsBtn: document.querySelector('#refreshAnalyticsBtn'),
+  statTotal: document.querySelector('#statTotal'),
+  statGreen: document.querySelector('#statGreen'),
+  statAmber: document.querySelector('#statAmber'),
+  statRed: document.querySelector('#statRed'),
+  activityTableBody: document.querySelector('#activityTableBody'),
 };
 
 function makeElement(tag, className, text) {
@@ -42,6 +53,7 @@ function triageCopy(result) {
 function renderResult(result) {
   elements.emptyResult.hidden = true;
   elements.resultContent.hidden = false;
+  if (elements.downloadPdfBtn) elements.downloadPdfBtn.hidden = false;
   elements.triageBadge.className = `triage-badge ${visualStatus(result.triage)}`;
   
   if (result.triage === "NO_HIGH_RISK_SIGNAL_DETECTED") {
@@ -144,12 +156,14 @@ function handleFileSelect(inputElement, previewElement) {
 }
 
 elements.documentImage.addEventListener("change", () => handleFileSelect(elements.documentImage, elements.docPreview));
+elements.documentBackImage.addEventListener("change", () => handleFileSelect(elements.documentBackImage, elements.docBackPreview));
 elements.liveImage.addEventListener("change", () => handleFileSelect(elements.liveImage, elements.livePreview));
 
 elements.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   
   const docFile = elements.documentImage.files[0];
+  const docBackFile = elements.documentBackImage.files[0];
   const liveFile = elements.liveImage.files[0];
   if (!docFile) return showError("Please upload a document image.");
 
@@ -166,8 +180,16 @@ elements.form.addEventListener("submit", async (event) => {
   try {
     const docData = new FormData();
     docData.append("document_image", docFile);
+    if (docBackFile) {
+        docData.append("document_back_image", docBackFile);
+    }
     if (liveFile) {
         docData.append("live_image", liveFile);
+    }
+    
+    const manualTypeSelect = document.getElementById("manualDocumentType");
+    if (manualTypeSelect) {
+      docData.append("manual_document_type", manualTypeSelect.value);
     }
     
     elements.progressText.textContent = "Running unified visual analysis (OCR, Forensics, Face)...";
@@ -244,3 +266,66 @@ elements.form.addEventListener("submit", async (event) => {
     elements.progressIndicator.hidden = true;
   }
 });
+
+// UI Interactions
+if (elements.tabButtons) {
+  elements.tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      elements.tabButtons.forEach(b => b.classList.remove('active'));
+      elements.tabContents.forEach(c => c.classList.remove('active'));
+      elements.tabContents.forEach(c => c.hidden = true);
+      
+      btn.classList.add('active');
+      const targetId = btn.getAttribute('data-target');
+      const targetEl = document.getElementById(targetId);
+      if (targetEl) {
+        targetEl.classList.add('active');
+        targetEl.hidden = false;
+      }
+      
+      if (targetId === 'analyticsTab') {
+        loadAnalytics();
+      }
+    });
+  });
+}
+
+if (elements.downloadPdfBtn) {
+  elements.downloadPdfBtn.addEventListener('click', () => {
+    window.print();
+  });
+}
+
+async function loadAnalytics() {
+  try {
+    const res = await fetch('/api/analytics');
+    if (!res.ok) throw new Error("Failed to load analytics");
+    const data = await res.json();
+    
+    if (elements.statTotal) elements.statTotal.textContent = data.total;
+    if (elements.statGreen) elements.statGreen.textContent = data.riskDistribution.green;
+    if (elements.statAmber) elements.statAmber.textContent = data.riskDistribution.amber;
+    if (elements.statRed) elements.statRed.textContent = data.riskDistribution.red;
+    
+    if (elements.activityTableBody) {
+      if (!data.recent || data.recent.length === 0) {
+        elements.activityTableBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:2rem 0;">No screenings yet. Upload a document in the Screening tab to see activity.</td></tr>';
+      } else {
+        elements.activityTableBody.innerHTML = data.recent.map(r => `
+          <tr>
+            <td>${new Date(r.timestamp).toLocaleTimeString()}</td>
+            <td style="text-transform: capitalize;">${r.docType}</td>
+            <td><span class="status-chip" style="background: ${r.triage === 'NO_HIGH_RISK_SIGNAL_DETECTED' ? 'var(--accent)' : (r.triage === 'MANUAL_REVIEW' ? 'var(--warning)' : 'var(--danger)')}">${r.triage.replaceAll("_", " ")}</span></td>
+            <td style="font-family: monospace; font-size: 0.8rem; color: var(--muted);">${r.id}</td>
+          </tr>
+        `).join('');
+      }
+    }
+  } catch(e) {
+    console.error("Analytics Error:", e);
+  }
+}
+
+if (elements.refreshAnalyticsBtn) {
+  elements.refreshAnalyticsBtn.addEventListener('click', loadAnalytics);
+}
