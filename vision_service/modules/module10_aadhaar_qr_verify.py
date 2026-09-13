@@ -155,7 +155,7 @@ def verify_aadhaar_secure_qr(numeric_string: str, cert_path: str, parse_fields: 
             fields=fields,
         )
     except Exception as exc:
-        return QRVerificationResult(signature_valid=False, reason=f"Could not process QR payload: {exc}")
+        return QRVerificationResult(signature_valid=None, reason=f"Could not process QR payload: {exc}")
 
 
 def read_qr_numeric_string_from_image(image_bytes: bytes) -> Optional[str]:
